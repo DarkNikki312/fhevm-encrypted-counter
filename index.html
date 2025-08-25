@@ -27,120 +27,154 @@
 
   <pre id="log" style="background:#f7f7f8;border:1px solid #eee;padding:12px;min-height:180px;white-space:pre-wrap"></pre>
 
-  <script type="module">
-    // Official Relayer SDK (ESM CDN). Docs: Web applications guide.
-    // It bundles WASM + workers and exposes initSDK/createInstance/SepoliaConfig.
-    import { initSDK, createInstance, SepoliaConfig }
-      from "https://cdn.zama.ai/relayer-sdk-js/0.1.0-9/relayer-sdk-js.js"; // docs show this path :contentReference[oaicite:1]{index=1}
+<script type="module">
+  // Relayer SDK (ESM CDN)
+  import { initSDK, createInstance, SepoliaConfig }
+    from "https://cdn.zama.ai/relayer-sdk-js/0.1.0-9/relayer-sdk-js.js";
 
-    // Your deployed contract
-    const CONTRACT_ADDRESS = "0xC5B8f66e56D41d067D88C06413AbCe7b99727E44";
+  // ethers v6 is loaded by the UMD <script> in <head>
+  const CONTRACT_ADDRESS = "0xC5B8f66e56D41d067D88C06413AbCe7b99727E44";
+  const ABI = [
+    "function add(bytes32 encryptedAmount, bytes inputProof) external",
+    "function getEncryptedHandle() view returns (bytes32)",
+    "function requestReveal() external",
+    "function lastPlain() view returns (uint32)"
+  ];
 
-    // ABI note:
-    // externalEuint32 is encoded as bytes32 in the ABI, so we declare bytes32 here.
-    const ABI = [
-      "function add(bytes32 encryptedAmount, bytes inputProof) external",
-      "function getEncryptedHandle() view returns (bytes32)",
-      "function requestReveal() external",
-      "function lastPlain() view returns (uint32)"
-    ];
+  const $ = (id) => document.getElementById(id);
+  const log = (...args) => { const el = $("log"); el.textContent += args.join(" ") + "\n"; el.scrollTop = el.scrollHeight; };
 
-    const $ = (id) => document.getElementById(id);
-    const log = (...args) => { const el = $("log"); el.textContent += args.join(" ") + "\n"; el.scrollTop = el.scrollHeight; };
+  let connecting = false;
+  let instance = null;   // Relayer SDK instance
+  let signer = null, account = null;
+  let contract = null;
+  let initialized = false;
 
-    let instance;   // Relayer SDK instance
-    let signer, account;
-    let contract;   // ethers.Contract
+  // Disable action buttons until connected
+  const setUiEnabled = (on) => {
+    $("btnAdd").disabled   = !on;
+    $("btnShow").disabled  = !on;
+    $("btnReveal").disabled= !on;
+  };
+  setUiEnabled(false); // start disabled
 
-    // Connect MetaMask and initialize the Relayer SDK (Sepolia)
-    async function connect() {
+  async function connect() {
+    if (initialized || connecting) return; // prevent re-entry
+    connecting = true;
+
+    try {
       if (!window.ethereum) { alert("MetaMask required"); return; }
-      await window.ethereum.request({ method: "eth_requestAccounts" });
 
-      // ethers v6 BrowserProvider + signer
+      // 1) Request accounts and set up signer
+      await window.ethereum.request({ method: "eth_requestAccounts" });
       const provider = new ethers.BrowserProvider(window.ethereum);
-      signer = await provider.getSigner();
+      signer  = await provider.getSigner();
       account = await signer.getAddress();
       $("account").textContent = account;
 
-      // Load WASM and create fhEVM instance for Sepolia.
-      // SepoliaConfig ships with chainId/gatewayChainId/relayerUrl maintained by Zama.
-      await initSDK(); // must be called once before using the SDK
-      const config = { ...SepoliaConfig, network: window.ethereum }; // use MetaMask network
-      instance = await createInstance(config); // documented init flow :contentReference[oaicite:2]{index=2}
+      // 2) Init WASM and create SDK instance
+      await initSDK(); // must be called before createInstance
+      const config = { ...SepoliaConfig, network: window.ethereum };
+      instance = await createInstance(config);
 
-      // Initialize contract binding
+      // 3) Bind contract
       contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
 
+      initialized = true;
+      setUiEnabled(true);
       log("✅ Connected:", account);
+    } catch (e) {
+      console.error(e);
+      log("❌ connect() error:", e?.message || e);
+    } finally {
+      connecting = false;
     }
+  }
 
-    // Encrypt a uint32 and call add()
-    async function addEncrypted() {
-      try {
-        const v = BigInt($("value").value);
-        log("Step 1: encrypting", v.toString());
-
-        // Register + encrypt input for this contract and user
-        const buffer = instance.createEncryptedInput(CONTRACT_ADDRESS, account);
-        buffer.add32(v); // euint32
-        const ciphertexts = await buffer.encrypt(); // -> { handles: [...], inputProof }
-
-        log(" → handle:", ciphertexts.handles[0]);
-
-        log("Step 2: calling add(...)");
-        const tx = await contract.add(ciphertexts.handles[0], ciphertexts.inputProof);
-        log(" → tx:", tx.hash);
-        const rc = await tx.wait();
-        log(" → mined in block", rc.blockNumber);
-      } catch (e) {
-        console.error(e);
-        log("❌ add() error:", e?.message || e);
-      }
+  // Helper to ensure we’re connected before any action
+  async function ensureConnected() {
+    if (!initialized) {
+      await connect();
+      if (!initialized) throw new Error("Not connected");
     }
+  }
 
-    // Show plaintext via HTTP public decryption (off-chain)
-    async function showValueHttp() {
-      try {
-        log("Getting handle from contract...");
-        const handle = await contract.getEncryptedHandle();
-        log(" handle:", handle);
-        log("Calling publicDecrypt via Relayer...");
-        const values = await instance.publicDecrypt([handle]); // returns a map: { handleHex: value }
-        log(" → plaintext:", values[handle]);
-      } catch (e) {
-        console.error(e);
-        log("❌ publicDecrypt error:", e?.message || e);
-      }
+  // Encrypt a uint32 and call add()
+  async function addEncrypted() {
+    try {
+      await ensureConnected(); // lazy connect if user skipped it
+
+      const v = BigInt($("value").value);
+      log("Step 1: encrypting", v.toString());
+
+      // Register + encrypt input for this contract and user
+      const buffer = instance.createEncryptedInput(CONTRACT_ADDRESS, account);
+      buffer.add32(v); // euint32
+      const ciphertexts = await buffer.encrypt(); // { handles: [...], inputProof }
+      log(" → handle:", ciphertexts.handles[0]);
+
+      log("Step 2: calling add(...)");
+      const tx = await contract.add(ciphertexts.handles[0], ciphertexts.inputProof);
+      log(" → tx:", tx.hash);
+      const rc = await tx.wait();
+      log(" → mined in block", rc.blockNumber);
+    } catch (e) {
+      console.error(e);
+      log("❌ add() error:", e?.message || e);
     }
+  }
 
-    // Trigger on-chain reveal (asynchronous Oracle path)
-    async function revealOnChain() {
-      try {
-        log("Sending on-chain requestReveal()...");
-        const tx = await contract.requestReveal();
-        log(" → tx:", tx.hash);
-        await tx.wait();
+  // Show plaintext via HTTP public decryption (off-chain)
+  async function showValueHttp() {
+    try {
+      await ensureConnected();
 
-        // Poll lastPlain after a short delay (oracle response is asynchronous)
-        setTimeout(async () => {
-          try {
-            const plain = await contract.lastPlain();
-            log(" → lastPlain =", plain.toString());
-          } catch (e) {
-            log(" (Oracle might not have responded yet, try again shortly)");
-          }
-        }, 8000);
-      } catch (e) {
-        console.error(e);
-        log("❌ requestReveal error:", e?.message || e);
-      }
+      log("Getting handle from contract...");
+      const handle = await contract.getEncryptedHandle();
+      log(" handle:", handle);
+
+      log("Calling publicDecrypt via Relayer...");
+      const values = await instance.publicDecrypt([handle]); // { [handleHex]: value }
+      log(" → plaintext:", values[handle]);
+    } catch (e) {
+      console.error(e);
+      log("❌ publicDecrypt error:", e?.message || e);
     }
+  }
 
-    $("connect").onclick = connect;
-    $("btnAdd").onclick = addEncrypted;
-    $("btnShow").onclick = showValueHttp;
-    $("btnReveal").onclick = revealOnChain;
-  </script>
+  // Trigger on-chain reveal (asynchronous Oracle path)
+  async function revealOnChain() {
+    try {
+      await ensureConnected();
+
+      log("Sending on-chain requestReveal()...");
+      const tx = await contract.requestReveal();
+      log(" → tx:", tx.hash);
+      await tx.wait();
+
+      // Poll lastPlain after a short delay (oracle response is asynchronous)
+      setTimeout(async () => {
+        try {
+          const plain = await contract.lastPlain();
+          log(" → lastPlain =", plain.toString());
+        } catch (e) {
+          log(" (Oracle might not have responded yet, try again shortly)");
+        }
+      }, 8000);
+    } catch (e) {
+      console.error(e);
+      log("❌ requestReveal error:", e?.message || e);
+    }
+  }
+
+  // Wire buttons
+  $("connect").onclick  = connect;
+  $("btnAdd").onclick   = addEncrypted;
+  $("btnShow").onclick  = showValueHttp;
+  $("btnReveal").onclick= revealOnChain;
+
+  // Optional: auto-connect on page load (comment out if you prefer manual)
+  // await connect();
+</script>
 </body>
 </html>
