@@ -1,0 +1,62 @@
+name: Content sync
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Randomize (80% chance to skip)
+        run: |
+          R=$(( RANDOM % 10 ))
+          if [ "$R" -lt 8 ]; then
+            echo "SKIP_RUN=true" >> $GITHUB_ENV
+          else
+            echo "SKIP_RUN=false" >> $GITHUB_ENV
+          fi
+
+      - name: Early exit if skipping
+        if: env.SKIP_RUN == 'true'
+        run: echo "Skipping today."
+
+      - name: Random sleep (0–1800s)
+        if: env.SKIP_RUN == 'false'
+        run: |
+          S=$(( RANDOM % 1801 ))
+          echo "Sleeping $S seconds..."
+          sleep $S
+
+      - name: Update metrics payload
+        if: env.SKIP_RUN == 'false'
+        run: |
+          mkdir -p data
+          TS_UTC="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          HASH="$(echo $RANDOM$TS_UTC | sha1sum | cut -c1-8)"
+          jq -n --arg ts "$TS_UTC" --arg hash "$HASH" \
+            '{ lastSync: $ts, rev: $hash }' > data/metrics.json
+          cat data/metrics.json
+
+      - name: Commit
+        if: env.SKIP_RUN == 'false'
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/metrics.json
+          msgs=("chore: update assets" "chore: content sync" "build: refresh static data" "docs: update meta" "ci: housekeeping")
+          msg=${msgs[$RANDOM % ${#msgs[@]}]}
+          git commit -m "$msg" || echo "no changes"
+
+      - name: Push
+        if: env.SKIP_RUN == 'false'
+        uses: ad-m/github-push-action@v0.6.0
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
