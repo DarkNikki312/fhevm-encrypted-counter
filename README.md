@@ -20,7 +20,7 @@ The contract imports `FHE.sol` and `SepoliaConfig` from `@fhevm/solidity`, which
 
 Open `index.html` in a static server (recommended) and:
 1. Click **Connect MetaMask** (network: **Sepolia**).
-2. Enter a number and click **Add (encrypted)** — SDK encrypts input and calls `add(...)`.
+2. Enter a number and click **Add (encrypted)** — SDK encrypts input and calls `add(...)`
 3. Click **Show via HTTP Public Decrypt** — SDK returns plaintext via relayer HTTP public decryption.
 4. Optionally click **On-chain Reveal (Oracle)**, then read `lastPlain` after the oracle callback.
 
