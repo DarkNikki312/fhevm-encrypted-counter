@@ -3,7 +3,7 @@
 A minimal confidential counter dApp built on Zama fhEVM. The contract stores a `euint32`, supports homomorphic addition of encrypted inputs, and demonstrates public reveal via the Decryption Oracle. The frontend (single HTML file) encrypts inputs in the browser via the Relayer SDK and calls the contract on Sepolia.
 
 - **Contract**: `0xC5B8f66e56D41d067D88C06413AbCe7b99727E44` (Sepolia)
-- **Stack**: Solidity 0.8.24, `@fhevm/solidity` v0.7.x, ethers v6, Relayer SDK (CDN)
+- **Stack**: Solidity 0.8.25, `@fhevm/solidity` v0.7.x, ethers v6, Relayer SDK (CDN)
 
 ## Smart contract
 
